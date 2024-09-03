@@ -11,11 +11,16 @@ alias l='ls -F'
 alias grep='grep --color=auto'
 export LESS=-FR
 
-export HISTFILE=$HOME/.bash_history
+export HISTFILE=/home/$USER/.bash_history
 touch $HISTFILE
 export HISTSIZE=10000
 export SAVEHIST=10000
-setopt SHARE_HISTORY
+
+if [ "$SHELL" = "/bin/bash" ]; then
+  shopt -s histappend
+else
+  setopt SHARE_HISTORY
+fi
 
 if [ -f /release_setup.sh ]; then
   source /release_setup.sh
