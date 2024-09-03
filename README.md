@@ -51,13 +51,16 @@ setupATLAS -c find=AnalysisBase,25.2.12 \
  --mount=/path/to/vomses:/etc/vomses \
  --mount=/host/path/to/athena:$HOME/athena \
  --afterrun="rmdir athena" \
- --mount=$PWD:$HOME --pwd=$HOME \
- --swtype=docker --runtimeOpt="docker|--env DISPLAY=$DISPLAY -p 8888:8888 --gpus all" --buildFile=Dockerfile \
+ --mount=$PWD:$HOME \
+ --pwd=$HOME \
+ --swtype=docker \
+ --runtimeOpt="docker|--env DISPLAY=$DISPLAY -p 8888:8888 --gpus all" \
+ --buildFile=Dockerfile \
  --postsetup="source /srv/setup_session.sh"
 source setup_venv.sh -v -i jupyter torch # in the container
 ```
 
-Make sure that your `/path/to/vomses` contains a file called `atlas-voms-atlas-auth.app.cern.ch` with the following contents:
+Make sure that your `/path/to/pem/certs` contains `userkey.pem` and `usercert.pem` files, and that `/path/to/vomses` includes a file called `atlas-voms-atlas-auth.app.cern.ch` with the following contents:
 ```
 "atlas" "voms-atlas-auth.app.cern.ch" "443" "/DC=ch/DC=cern/OU=computers/CN=atlas-auth.web.cern.ch" "atlas"
 ```
@@ -67,11 +70,14 @@ Side note: `setupATLAS` originates from `/etc/hepix/sh/GROUP/zp/group_rc.sh`, wh
 
 The last line in the above installs Jupyter and PyTorch modules. The modules are placed into `$PWD` of the host machine. The directory name where those modules reside is derived from the ATLAS container name. This setup avoids unnecessarily lengthy builds of the same container by keeping the modules outside of it.
 
+When launching a vanilla `el9` container, you might want to drop the `--buildFile` option.
+Note that Docker images are cached in your `$HOME/.alrb/container/docker/`.
+
 The Docker container has the following features:
 
 - ability to install custom software system-wide, which is not possible in, e.g., Apptainer;
 - access to CVMFS, which is mounted to `/cvmfs` inside the container implicitly;
-- possibility to launch Jupyter notebook by forwarding the ports with the `-p 8888:8888` option:
+- possibility to launch Jupyter notebook by forwarding the ports with the `-p 8888:8888` option (which remember to increment when running multiple containers simultaneously):
 
     ```
     jupyter notebook --ip 0.0.0.0 --port 8888 --no-browser --allow-root
@@ -137,7 +143,10 @@ We're  trying to install the latest version of the [EOS](https://github.com/cern
 1. make sure that the following dependencies are installed via arch package manager
 
     ```
-    pacman -S git gcc cmake readline fuse2 fuse3 leveldb binutils zlib bzip2 attr util-linux-libs xfsprogs sparsehash e2fsprogs libmicrohttpd openssl ncurses protobuf cppunit openldap hiredis zeromq jsoncpp cppzmq curl libevent jemalloc
+    pacman -S git gcc cmake readline fuse2 fuse3 leveldb binutils zlib bzip2 attr \
+              util-linux-libs xfsprogs sparsehash e2fsprogs libmicrohttpd openssl \
+              ncurses protobuf cppunit openldap hiredis zeromq jsoncpp cppzmq curl \
+              libevent jemalloc
     ```
 
 2. Although [`xrootd`](https://github.com/xrootd/xrootd) is readily available in [Arch repositories](https://gitlab.archlinux.org/archlinux/packaging/packages/xrootd), it's lagging behind: The latest release is `5.7.0`, while the latest package that's available in the Arch repositories is `5.6.4`. Unfortunately, the latter is incompatible with the EOS package since EOS version (5.2.13). The earliest `xrootd` version that's probably compatible with the new header structure is `5.6.7`. However, there's no reason to switch to some old version; instead we'll try to install the latest `xrootd` onto our system, which currently happens to be `5.7.0`. To achieve this, we'll create the following `PKGBUILD` file:
