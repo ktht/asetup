@@ -70,7 +70,11 @@ if [ $venv_provided -eq 0 ]; then
   return 1
 fi
 
-venv_default=venv-${AtlasProject}-$(eval echo \$$AtlasProject\_VERSION)
+if [ -z $AtlasProject ]; then
+  venv_default=venv-$(echo $ALRB_CONT_IMAGE | awk -F'/' '{print $NF}' | sed 's/:/-/g')
+else
+  venv_default=venv-${AtlasProject}-$(eval echo \$$AtlasProject\_VERSION)
+fi
 
 if [ -z "$venv_dir" ]; then
   venv_dir=$venv_default
