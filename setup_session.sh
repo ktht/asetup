@@ -8,6 +8,7 @@ if command -v bindkey &>/dev/null; then
 fi
 alias ls='ls --color=auto'
 alias l='ls -F'
+alias ll='l -l'
 alias grep='grep --color=auto'
 export LESS=-FR
 
