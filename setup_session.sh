@@ -19,7 +19,9 @@ export SAVEHIST=10000
 if [ "$SHELL" = "/bin/bash" ]; then
   shopt -s histappend
 else
+  # we're in zsh
   setopt SHARE_HISTORY
+  export PROMPT="%B%F{red}[%f%b%B%F{red}%n %f%b%B%F{red}@ %f%b%B%F{red}$ALRB_CONT_SETUPATLASOPT%f%b%F{red}]%f%B%F{blue}: %f%b%B%F{blue}%~%f%b%B%F{blue} > %f%b"
 fi
 
 if [ -f /release_setup.sh ]; then

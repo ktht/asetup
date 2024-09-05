@@ -1,12 +1,13 @@
 #!/bin/bash
 
 print_help() {
-  echo "Usage: $0 [-i|--install <jupyter|torch>] -v|--venv [<directory>] [-h|--help]"
+  echo "Usage: $0 [-i|--install <jupyter|torch>] -v|--venv [<directory>] [-r|--requirements <requirements>] [-h|--help]"
   echo ""
   echo "Options:"
-  echo "  -v, --venv [<directory>]       Specify a virtual environment directory"
-  echo "  -i, --install <jupyter|torch>  Install specified packages"
-  echo "  -h, --help                     Show this help message"
+  echo "  -v, --venv [<directory>]          Specify a virtual environment directory"
+  echo "  -i, --install <jupyter|torch>     Install specified packages"
+  echo "  -r, --requirements <requirements> Installation requirements (e.g., requests<=2.31.0)"
+  echo "  -h, --help                        Show this help message"
 }
 
 if [ ! -z $VIRTUAL_ENV ]; then
@@ -19,6 +20,7 @@ install_jupyter=0
 install_torch=0
 venv_dir=""
 venv_provided=0
+requirements=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -51,6 +53,18 @@ while [[ $# -gt 0 ]]; do
         shift
       fi
       ;;
+    -r|--requirements)
+      shift
+      while [[ $# -gt 0 && $1 != -* ]]; do
+        requirements="$requirements $1"
+        shift
+      done
+      if [[ -z "$requirements" ]]; then
+        echo "No arguments provided for -r|--requirements: $requirements"
+        print_help
+        return 1
+      fi
+      ;;
     -h|--help)
       print_help
       return 0
@@ -71,10 +85,16 @@ if [ $venv_provided -eq 0 ]; then
 fi
 
 if [ -z $AtlasProject ]; then
-  venv_default=venv-$(echo $ALRB_CONT_IMAGE | awk -F'/' '{print $NF}' | sed 's/:/-/g')
-else
-  venv_default=venv-${AtlasProject}-$(eval echo \$$AtlasProject\_VERSION)
+  echo "Set up ATLAS project first!"
+  return 1
 fi
+
+venv_default=$(echo $ALRB_CONT_IMAGE | awk -F'/' '{print $NF}' | sed 's/:/-/g; s/=/-/g')
+project_name=${AtlasProject}-$(eval echo \$$AtlasProject\_VERSION)
+if [ "$(echo $project_name | tr '[:upper:]' '[:lower:]')" != "$venv_default" ]; then
+  venv_default=${venv_default}-${project_name}
+fi
+venv_default=venv-${venv_default}
 
 if [ -z "$venv_dir" ]; then
   venv_dir=$venv_default
@@ -100,7 +120,7 @@ source $venv_dir/bin/activate
 if [ $install_jupyter -eq 1 ]; then
   if ! pip show jupyter &> /dev/null; then
     echo "Installing Jupyter ..."
-    pip install jupyter
+    pip install jupyter $requirements
   else
     echo "Jupyter already installed"
   fi
