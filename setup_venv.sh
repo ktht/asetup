@@ -84,17 +84,8 @@ if [ $venv_provided -eq 0 ]; then
   return 1
 fi
 
-if [ -z $AtlasProject ]; then
-  echo "Set up ATLAS project first!"
-  return 1
-fi
-
-venv_default=$(echo $ALRB_CONT_IMAGE | awk -F'/' '{print $NF}' | sed 's/:/-/g; s/=/-/g')
-project_name=${AtlasProject}-$(eval echo \$$AtlasProject\_VERSION)
-if [ "$(echo $project_name | tr '[:upper:]' '[:lower:]')" != "$venv_default" ]; then
-  venv_default=${venv_default}-${project_name}
-fi
-venv_default=venv-${venv_default}
+get_alrb || return 1
+venv_default=venv-$alrb_name
 
 if [ -z "$venv_dir" ]; then
   venv_dir=$venv_default

@@ -369,3 +369,111 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     ```
 
     Interactive `eos` also works. Mounting `/eos` with `eosxd3` hasn't been particularly successful, however.
+
+## Docker and VSCode
+
+This section describes how to run VSCode together with Docker.
+The main advantage of this method over running VSCode via SSH is mainly latency, as there's no lag induced by the network (except for CVMFS caching) nor the filsystem, which can be notoriously bad on LXPLUS.
+Furthermore, if an LXPLUS node goes down then access to the code is also lost.
+
+For whatever reason Docker in Athena is configured to use past-EOL CC7 with an outdated mirror to EPEL repository and old `pip` version.
+Here's a patch that resolves both problems:
+
+```diff
+diff --git a/.devcontainer/Dockerfile b/.devcontainer/Dockerfile
+index 6501acef459..c94e5d929fb 100644
+--- a/.devcontainer/Dockerfile
++++ b/.devcontainer/Dockerfile
+@@ -7,6 +7,21 @@ FROM cern/cc7-base:latest
+ USER root
+ WORKDIR /root
+
++# Patch the EPEL repository file
++RUN echo -e '[epel]\n\
++name=Extra Packages for Enterprise Linux 7 - $basearch\n\
++baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch\n\
++enabled=1\n\
++gpgcheck=0\n\
++gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7\n\
++\n\
++[epel-debuginfo]\n\
++name=Extra Packages for Enterprise Linux 7 - $basearch - Debug\n\
++baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch/debug\n\
++enabled=0\n\
++gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-7\n\
++gpgcheck=0\n' > /etc/yum.repos.d/epel.repo
++
+ # Install some additional packages.
+ RUN yum -y install which sclo-git212 wget tar atlas-devel libuuid-devel texinfo \
+            python2-pip redhat-lsb-core libX11-devel libXpm-devel libXft-devel  \
+@@ -25,7 +40,7 @@ COPY atlas_prompt.sh setup_atlas.sh enable_sclo_git212.sh /etc/profile.d/
+ COPY motd /etc/
+
+ # Install flake8 python linter
+-RUN pip install flake8 six
++RUN pip install flake8 six --trusted-host=pypi.python.org --trusted-host=pypi.org --trusted-host=files.pythonhosted.org
+ RUN scl enable sclo-git212 'pip install git+https://:@gitlab.cern.ch:8443/atlas/atlasexternals.git#subdirectory=External/flake8_atlas'
+
+ # Switch to the ATLAS account.
+```
+
+As described in the [original docs](https://atlassoftwaredocs.web.cern.ch/athena/ide/docker/), before VSCode's IntelliSense regonizes any source code it is imperative to first build something in the Athena project. To do this you have to create a `build` directory outside of the Athena project (here we create it next to the Athena directory), set up your working area and run `cmake` in it:
+
+```
+mkdir build && cd $_
+asetup AthAnalysis,24.2.41
+source x86_64-el9-gcc13-opt/setup.sh
+cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=TRUE \
+      -DATLAS_ENABLE_IDE_HELPERS=TRUE \
+      -DATLAS_PACKAGE_FILTER_FILE=../athena/Projects/WorkDir/package_filters_example.txt \
+      ../athena/Projects/WorkDir
+```
+
+Note that `asetup` is not available in Athena containers.
+
+The `ATLAS_ENABLE_IDE_HELPERS` flag is responsible for creating symlinks `ide_compiler` and `ide_python`, which point to particular versions of GCC and Python compilers on CVFMS depending on the Athena release.
+
+Alternatively, instead of launching the Docker from wihtin VSCode (`Dev Containers: Open Folder in Container...`) one could also launch it in a separate terminal and then connect to it from VSCode (`Dev Containers: Attach to Running Container...`).
+This might be more convenient as it wouldn't entail editing the `Dockerfile` that's part of the athena repository.
+
+Unfortunately, VSCode's IntelliSense doesn't seem to work properly when run in Docker.
+The main issue is that when launching a Docker session within VSCode or when attaching to an already running container, it's unable to autodetect the include paths that are necessary for IntelliSense to work.
+It's the responsibility of the user to set up the environment properly.
+Ideally, these environment variables would be propagated from [standard shell scripts](https://code.visualstudio.com/docs/supporting/faq#_resolving-shell-environment-fails) to IntelliSense, but as other have [noted](https://github.com/microsoft/vscode-cpptools/issues/11186) it's not really the case.
+Furthermore, while propagating environment variables from a container is theoretically [possible](https://code.visualstudio.com/docs/devcontainers/attach-container#_variables-in-attached-container-configuration-files), it's probably too difficult to propagate anything from a *shell session* that's already running in the container to IntelliSense.
+Ideally, these include paths could be passed to IntelliSense the same way paths to Python modules are (i.e., by dumping them to a text file like `env.txt` as shown [here](https://gitlab.cern.ch/atlas/athena/-/blob/main/.vscode/IDEHelperScripts/Setup.cmake) and then passing the text file to [`"python.envFile"` setting](https://code.visualstudio.com/docs/python/environments#_environment-variable-definitions-file), but C/C++ IntelliSense configuration doesn't support this feature yet.
+
+The solution to this conundrum isn't elegant but it's guaranteed to work.
+First, you need to patch the `c_cpp_properties.json` file as follows:
+
+```diff
+diff --git a/.vscode/c_cpp_properties.json b/.vscode/c_cpp_properties.json
+index 7430a59e918..a2635a59c6f 100644
+--- a/.vscode/c_cpp_properties.json
++++ b/.vscode/c_cpp_properties.json
+@@ -3,7 +3,8 @@
+         {
+             "name": "Linux",
+             "includePath": [
+-                "${workspaceFolder}/**"
++                "${workspaceFolder}/**",
++                "${workspaceFolder}/../include"
+             ],
+             "defines": [],
+             "compilerPath": "${workspaceFolder}/../build/ide_compiler",
+```
+
+Then call `vscode_inc` in the Docker session and wait until it creates the symlinks for every single header file or directory that's stored in the directories given by `$ROOT_INCLUDE_PATH`.
+The symlinks are created inside `include` directory, which is adjacent to the `build` and `athena` directories.
+The `include` directory itself is a symlink to the actual directory hosting the symlinks.
+The actual directory is given a unique name based on container name and `asetup` arguments to distinguish it from other `include` directories created in different conditions.
+When a new build directory is created with a different setup, then the existing `include` symlink is pointed to the new directory containing the symlinks.
+To illustrate the point, here's how the directory structure might look after multiple builds:
+
+```
+athena/
+include -> build/../include-atlas-grid-almalinux9-AthAnalysis-24.2.41/
+include-atlas-grid-almalinux9-AthAnalysis-24.2.41/
+include-atlas-grid-almalinux9-AnalysisBase-25.2.12/
+build/
+```
