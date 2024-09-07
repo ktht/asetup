@@ -376,6 +376,8 @@ This section describes how to run VSCode together with Docker.
 The main advantage of this method over running VSCode via SSH is mainly latency, as there's no lag induced by the network (except for CVMFS caching) nor the filsystem, which can be notoriously bad on LXPLUS.
 Furthermore, if an LXPLUS node goes down then access to the code is also lost.
 
+### Docker started from VSCode
+
 For whatever reason Docker in Athena is configured to use past-EOL CC7 with an outdated mirror to EPEL repository and old `pip` version.
 Here's a patch that resolves both problems:
 
@@ -433,6 +435,8 @@ Note that `asetup` is not available in Athena containers.
 
 The `ATLAS_ENABLE_IDE_HELPERS` flag is responsible for creating symlinks `ide_compiler` and `ide_python`, which point to particular versions of GCC and Python compilers on CVFMS depending on the Athena release.
 
+### Attaching VSCode to a running Docker container
+
 Alternatively, instead of launching the Docker from wihtin VSCode (`Dev Containers: Open Folder in Container...`) one could also launch it in a separate terminal and then connect to it from VSCode (`Dev Containers: Attach to Running Container...`).
 This might be more convenient as it wouldn't entail editing the `Dockerfile` that's part of the athena repository.
 
@@ -441,7 +445,8 @@ The main issue is that when launching a Docker session within VSCode or when att
 It's the responsibility of the user to set up the environment properly.
 Ideally, these environment variables would be propagated from [standard shell scripts](https://code.visualstudio.com/docs/supporting/faq#_resolving-shell-environment-fails) to IntelliSense, but as other have [noted](https://github.com/microsoft/vscode-cpptools/issues/11186) it's not really the case.
 Furthermore, while propagating environment variables from a container is theoretically [possible](https://code.visualstudio.com/docs/devcontainers/attach-container#_variables-in-attached-container-configuration-files), it's probably too difficult to propagate anything from a *shell session* that's already running in the container to IntelliSense.
-Ideally, these include paths could be passed to IntelliSense the same way paths to Python modules are (i.e., by dumping them to a text file like `env.txt` as shown [here](https://gitlab.cern.ch/atlas/athena/-/blob/main/.vscode/IDEHelperScripts/Setup.cmake) and then passing the text file to [`"python.envFile"` setting](https://code.visualstudio.com/docs/python/environments#_environment-variable-definitions-file), but C/C++ IntelliSense configuration doesn't support this feature yet.
+That's also probably why VSCode is unable to detect the compiler when attaching to a Docker container where the environment was set up manually.
+Ideally, these paths could be passed to IntelliSense the same way as paths to Python modules (i.e., by dumping them to a text file like `env.txt` as shown [here](https://gitlab.cern.ch/atlas/athena/-/blob/main/.vscode/IDEHelperScripts/Setup.cmake) and then passing the text file to [`"python.envFile"` setting](https://code.visualstudio.com/docs/python/environments#_environment-variable-definitions-file), but C/C++ IntelliSense configuration doesn't support this feature yet.
 
 The solution to this conundrum isn't elegant but it's guaranteed to work.
 First, you need to patch the `c_cpp_properties.json` file as follows:
@@ -477,3 +482,20 @@ include-atlas-grid-almalinux9-AthAnalysis-24.2.41/
 include-atlas-grid-almalinux9-AnalysisBase-25.2.12/
 build/
 ```
+
+### VSCode with custom CMake projects
+
+If you want to enjoy IntelliSense in your custom CMake project, make sure to copy [the `.vscode` directory from Athena](https://gitlab.cern.ch/atlas/athena/-/tree/main/.vscode) to your project's root directory with the aforementioned patch to `c_cpp_properties.json` and include the following lines to your `CMakeLists.txt` (before `atlas_cpack_setup`?) that you want to build from:
+
+```cmake
+# Setup IDE integration:
+set( ATLAS_ENABLE_IDE_HELPERS OFF CACHE BOOL "Enable IDE helpers" )
+if( ATLAS_ENABLE_IDE_HELPERS )
+   set( ATLAS_IDEHELPERSCRIPTS_SETUP
+      "${CMAKE_SOURCE_DIR}/.vscode/IDEHelperScripts/Setup.cmake"
+      CACHE FILEPATH "Setup file for the IDE / VS Code helpers" )
+   include( "${ATLAS_IDEHELPERSCRIPTS_SETUP}" )
+endif()
+```
+
+Note that if the `CMakeLists.txt` file you want to build from is in a subdirectory relative to your project's root directory (`${CMAKE_SOURCE_DIR}`) you have to modify `${ATLAS_IDEHELPERSCRIPTS_SETUP}` accordingly.

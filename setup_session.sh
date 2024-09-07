@@ -51,11 +51,6 @@ vscode_inc () {
   fi
 
   dir=$TestArea/..
-  if [ ! -d $dir/athena ]; then
-    echo "The build directory ($TestArea) must be adjacent to athena"
-    return 1
-  fi
-
   inc_dir=$dir/include-$alrb_name
   ret_value=0
   if [ ! -d $inc_dir ]; then
