@@ -45,12 +45,16 @@ get_alrb () {
 vscode_inc () {
   get_alrb || return 1
 
-  if [ -z "$ROOT_INCLUDE_PATH" ] || [ -z "$TestArea" ]; then
-    echo "Make sure to run cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=TRUE -DATLAS_ENABLE_IDE_HELPERS=TRUE -DATLAS_PACKAGE_FILTER_FILE=..."
+  if [ -z "$ROOT_INCLUDE_PATH" ] || { [ -z "$TestArea" ] && [ -z "$UserAnalysis_DIR" ]; }; then
+    echo "Make sure to run cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=TRUE -DATLAS_ENABLE_IDE_HELPERS=TRUE -DATLAS_PACKAGE_FILTER_FILE=..., build your area with make and source x*/setup.sh"
     return 1
   fi
 
-  dir=$TestArea/..
+  if [ ! -z "$TestArea" ]; then
+    dir=$TestArea/..
+  else
+    dir=$UserAnalysis_DIR/../..
+  fi
   inc_dir=$dir/include-$alrb_name
   ret_value=0
   if [ ! -d $inc_dir ]; then
