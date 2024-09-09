@@ -60,6 +60,8 @@ setupATLAS -c find=AnalysisBase,25.2.12 \
 source setup_venv.sh -v -i jupyter torch # in the container
 ```
 
+Note that setting up `panda` does not work in this container; for that you need vanilla `el9` container.
+
 Make sure that your `/path/to/pem/certs` contains `userkey.pem` and `usercert.pem` files, and that `/path/to/vomses` includes a file called `atlas-voms-atlas-auth.app.cern.ch` with the following contents:
 ```
 "atlas" "voms-atlas-auth.app.cern.ch" "443" "/DC=ch/DC=cern/OU=computers/CN=atlas-auth.web.cern.ch" "atlas"
@@ -355,7 +357,8 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     export PATH=$PWD/../install/bin:$PWD/../install/sbin:$PATH
     export LD_LIBRARY_PATH=$PWD/../install/lib:$LD_LIBRARY_PATH
     export PYTHONPATH=$PWD/../install/lib/python3.12/site-packages:$PYTHONPATH
-    export EOS_MGM_URL=root://eosatlas.cern.ch
+    # <experiment> = atlas, cms, user if you want to access /eos/<experiment>
+    export EOS_MGM_URL=root://eos<experiment>.cern.ch
     kinit -f <CERN username>@CERN.CH
     ```
 
@@ -368,7 +371,33 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     xrdcp $EOS_MGM_URL//eos/... /local/path # equivalent to the previous line
     ```
 
-    Interactive `eos` also works. Mounting `/eos` with `eosxd3` hasn't been particularly successful, however.
+    Interactive `eos` also works.
+
+    The instructions for mounting `/eos` to local host are detailed [here](https://gitlab.cern.ch/dss/eos/-/blob/master/fusex/README.md#configuration-default-values-and-avoiding-configuration-files).
+    To summarize:
+
+    ```
+    mkdir -p $HOME/eos
+    eosxd3 -ofsname=<CERN username>@eos<experiment>.cern.ch:/eos/... $HOME/eos
+    ```
+
+    To unmount, simply run `fusermount3 -uz $HOME/eos`.
+
+    Cursory testing indicates that mounting to some experiment directory works (e.g., `/eos/atlas`) but mounting to user directory (i.e., `/eos/user`) does not.
+    It might have something to do with write permissions in the latter case.
+
+    In order to mount `/eos` to a Docker container (via, e.g., `--mount=$HOME/eos/:/eos` option that's passed to `setupATLAS`, see above), you first need to make sure that `user_allow_other` is uncommented in `/etc/fuse.conf` (which is completely fine in single-user environment) before running:
+
+    ```
+    eosxd3 -oallow_other,fsname=<CERN username>@eos<experiment>.cern.ch:/eos/... $HOME/eos
+    ```
+
+    Note that editing `/etc/fuse.conf` would be needed even when running the above command as `root`.
+
+    More fine-granular control over the mounting options can be assumed with JSON configuration file `$HOME/.eos/fuse.<name>.conf`, which you can write based on [`./fusex/fuse.conf.example`](https://gitlab.cern.ch/dss/eos/-/blob/master/fusex/fuse.conf.example).
+    Not all options need to be defined, as other options not defined in the configuration file will simply resort to their default values.
+    To mount EOS filesystem with the options defined in the JSON configuration file, just run `eosxd3 -ofsname=<name>`.
+    It's worth noting that it's not possible to propagate `allow_other` option from the JSON configuration file to the mount options.
 
 ## Docker and VSCode
 
