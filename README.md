@@ -11,7 +11,7 @@ Before mounting CVMFS directories, edit `/etc/cvmfs/default.local` such that it 
 ```
 CVMFS_REPOSITORIES=atlas.cern.ch,atlas-condb.cern.ch,grid.cern.ch,atlas-nightlies.cern.ch,sft.cern.ch,sft-nightlies.cern.ch,unpacked.cern.ch
 CVMFS_CACHE_BASE=$HOME/cache/cvmfs
-CVMFS_QUOTA_LIMIT=25000
+CVMFS_QUOTA_LIMIT=50000
 CVMFS_HTTP_PROXY=DIRECT
 CVMFS_USER=root
 CVMFS_DEBUGLOG=$HOME/cache/cvmfs.log
@@ -22,7 +22,8 @@ Quick explanation for some of the variables:
 
 - `CVMFS_USER` is set to `root` (instead of the default `cvmfs`) because if this line is not specified, it'll throw `cannot create workspace directory $HOME/cache/cvmfs/shared` error, which likely comes from the fact that mounting to `/cvmfs` requires root privileges;
 - `CVMFS_CLIENT_PROFILE` is set to `single` as recommended [in the official docs](https://cvmfs.readthedocs.io/en/stable/cpt-quickstart.html);
-- `CVMFS_QUOTA_LIMIT` is given in MBs.
+- `CVMFS_QUOTA_LIMIT` is the size of CVMFS cache (`CVMFS_CACHE_BASE`) given in MBs;
+- `CVMFS_DEBUGLOG` is the log file. You might want to delete it after you're done every session since it might grow to literal GBs within a few days.
 
 Mounting and unmounting is simple:
 ```
