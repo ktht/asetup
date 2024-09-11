@@ -114,6 +114,22 @@ The Docker container has the following features:
     ```
 
 After everything's said and done, be sure to stop the Docker daemon with `systemctl stop docker` and unmount the CVMFS directories.
+If you get an error to the tune of `Stopping 'docker.service', but its triggering units are still active: docker.socket`, then run `systemctl stop docker.socket`.
+
+It's also worth noting that the Docker images can take out a good chunk of your storage.
+Thus, make sure that you have enough space to accommodate the images or clean it up regularly.
+The images are stored on `/var/lib/docker` by default, but with a simple `rsync -a` command you can copy the files to a different location and edit `/etc/docker/daemon.json` accordingly:
+
+```json
+{
+    "data-root": "/new/path/to/docker/images"
+}
+```
+
+Before moving anything, though, make sure to stop all Docker daemon services.
+
+Launching Docker container via `setupATLAS` with the `--buildFile` option prompts Docker to build a new image, which remains "dangling" after exiting the container.
+To remove those dangling images, run `docker rmi $(docker images -f "dangling=true" -q)`, but don't use root privileges to remove images that are being used by stopped container, just leave them be.
 
 ## How to install EOS client in a Docker container
 
