@@ -23,7 +23,11 @@ Quick explanation for some of the variables:
 - `CVMFS_USER` is set to `root` (instead of the default `cvmfs`) because if this line is not specified, it'll throw `cannot create workspace directory $HOME/cache/cvmfs/shared` error, which likely comes from the fact that mounting to `/cvmfs` requires root privileges;
 - `CVMFS_CLIENT_PROFILE` is set to `single` as recommended [in the official docs](https://cvmfs.readthedocs.io/en/stable/cpt-quickstart.html);
 - `CVMFS_QUOTA_LIMIT` is the size of CVMFS cache (`CVMFS_CACHE_BASE`) given in MBs;
-- `CVMFS_DEBUGLOG` is the log file. You might want to delete it after you're done every session since it might grow to literal GBs within a few days.
+- `CVMFS_DEBUGLOG` is the log file. You might want to delete it after you're done every session since it might grow to literal GBs within a few days:
+
+    ```
+    rm -fv `cat /etc/cvmfs/default.local | grep CVMFS_DEBUGLOG | tr '=' ' ' | awk '{print $2}'`
+    ```
 
 Mounting and unmounting is simple:
 ```
@@ -374,7 +378,7 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     export PATH=$PWD/../install/bin:$PWD/../install/sbin:$PATH
     export LD_LIBRARY_PATH=$PWD/../install/lib:$LD_LIBRARY_PATH
     export PYTHONPATH=$PWD/../install/lib/python3.12/site-packages:$PYTHONPATH
-    # <experiment> = atlas, cms, user if you want to access /eos/<experiment>
+    # <experiment> = atlas, cms, lhcb, theory, ... if you want to access /eos/<experiment>
     export EOS_MGM_URL=root://eos<experiment>.cern.ch
     kinit -f <CERN username>@CERN.CH
     ```
@@ -398,10 +402,16 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     eosxd3 -ofsname=<CERN username>@eos<experiment>.cern.ch:/eos/... $HOME/eos
     ```
 
-    To unmount, simply run `fusermount3 -uz $HOME/eos`.
+    Mounting to `/eos/user` and `/eos/project` is complicated by the fact that `/eos/{user,project}/[a-z]` is a symlink to `/eos/{home,project}-[a-z]`, e.g., `/eos/user/t/testuser` resolves to `/eos/home-t/testuser` remotely.
+    However, those symlink targets are not accessible from the `eosuser` host.
+    In order to get around this problem, you need to mount `/eos/{home,project}-[a-z]` directory explicitly using `eos{home,project}-[a-z].cern.ch` as the hostname, e.g., `eoshome-t.cern.ch:/eos`, which gives access to `user/t` subdirectory from the mount point of your local machine.
+    Thus, to mount multiple user directories, it's better to mount at the subdirectory level as follows: `eos{home,project}-[a-z].cern.ch:/eos/{user,project}/[a-z] ~/eos/{user,project}/[a-z]`.
 
-    Cursory testing indicates that mounting to some experiment directory works (e.g., `/eos/atlas`) but mounting to user directory (i.e., `/eos/user`) does not.
-    It might have something to do with write permissions in the latter case.
+    EOS directories are mounted through FUSE, which gives access to those directories via POSIX interface.
+    In other words, you can use the same `ls`, `cd`, `find`, etc commands in EOS directories as if they were on local filesystem.
+    When copying large files from EOS to local filesystem, it may be convenient to track progress with `rsync -ah --progress`.
+
+    To unmount, simply run `fusermount3 -uz $HOME/eos`.
 
     In order to mount `/eos` to a Docker container (via, e.g., `--mount=$HOME/eos/:/eos` option that's passed to `setupATLAS`, see above), you first need to make sure that `user_allow_other` is uncommented in `/etc/fuse.conf` (which is completely fine in single-user environment) before running:
 
@@ -415,6 +425,10 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     Not all options need to be defined, as other options not defined in the configuration file will simply resort to their default values.
     To mount EOS filesystem with the options defined in the JSON configuration file, just run `eosxd3 -ofsname=<name>`.
     It's worth noting that it's not possible to propagate `allow_other` option from the JSON configuration file to the mount options.
+
+    Of course, all these steps can be bypassed by mouting with `sshfs`, e.g., `sshfs lxplus.cern.ch:/some/remote/directory /some/local/directory`, where `/some/remote/directory` can be any AFS or EOS path.
+    Since `sshfs` relies on FUSE libraries it provides the same POSIX interface as in EOS mounts.
+    Unmounting is also the same.
 
 ## Docker and VSCode
 
