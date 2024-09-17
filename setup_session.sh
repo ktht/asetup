@@ -45,7 +45,16 @@ get_alrb () {
 vscode_inc () {
   get_alrb || return 1
 
-  if [ -z "$ROOT_INCLUDE_PATH" ] || { [ -z "$TestArea" ] && [ -z "$UserAnalysis_DIR" ]; }; then
+  build_dir=""
+  for proj in `env | grep _SET_UP=1 | sed 's/_SET_UP=1$//g' | sort`; do
+    _build_dir=$(eval echo \$$proj\_DIR)
+    if [ -w $_build_dir ]; then
+      build_dir=$_build_dir
+      break
+    fi
+  done
+
+  if [ -z "$ROOT_INCLUDE_PATH" ] || { [ -z "$TestArea" ] && [ -z "$build_dir" ]; }; then
     echo "Make sure to run cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=TRUE -DATLAS_ENABLE_IDE_HELPERS=TRUE -DATLAS_PACKAGE_FILTER_FILE=..., build your area with make and source x*/setup.sh"
     return 1
   fi
@@ -53,7 +62,7 @@ vscode_inc () {
   if [ ! -z "$TestArea" ]; then
     dir=$TestArea/..
   else
-    dir=$UserAnalysis_DIR/../..
+    dir=$build_dir/../..
   fi
   inc_dir=$dir/include-$alrb_name
   ret_value=0
