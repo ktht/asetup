@@ -52,8 +52,8 @@ If everything's fine, then start the Docker daemon with `systemctl start docker`
 xhost +local:docker
 source setupATLAS.sh
 setupATLAS -c find=AnalysisBase,25.2.12 \
- --mount=/path/to/pem/certs:/alrb/.globus:delegated \
- --mount=/path/to/vomses:/etc/vomses:delegated \
+ --mount=/path/to/pem/certs:/alrb/.globus:delegated,ro \
+ --mount=/path/to/vomses:/etc/vomses:delegated,ro \
  --mount=/host/path/to/athena:$HOME/athena:delegated \
  --afterrun="rmdir athena" \
  --mount=$PWD:$HOME:delegated \
@@ -413,7 +413,7 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
 
     To unmount, simply run `fusermount3 -uz $HOME/eos`.
 
-    In order to mount `/eos` to a Docker container (via, e.g., `--mount=$HOME/eos/:/eos:delegated` option that's passed to `setupATLAS`, see above), you first need to make sure that `user_allow_other` is uncommented in `/etc/fuse.conf` (which is completely fine in single-user environment) before running:
+    In order to mount `/eos` to a Docker container (via, e.g., `--mount=$HOME/eos/:/eos:delegated,ro` option that's passed to `setupATLAS`, see above), you first need to make sure that `user_allow_other` is uncommented in `/etc/fuse.conf` (which is completely fine in single-user environment) before running:
 
     ```
     eosxd3 -oallow_other,fsname=<CERN username>@eos<experiment>.cern.ch:/eos/... $HOME/eos
