@@ -528,7 +528,8 @@ index 7430a59e918..a2635a59c6f 100644
              "compilerPath": "${workspaceFolder}/../build/ide_compiler",
 ```
 
-Then call `vscode_inc` in the Docker session and wait until it creates the symlinks for every single header file or directory that's stored in the directories given by `$ROOT_INCLUDE_PATH`.
+Then call `vscode_setup` in the Docker session and wait until it creates the symlinks for every single header file or directory that's stored in the directories given by `$ROOT_INCLUDE_PATH`.
+The function also sets up container-specific hidden directory for hosting VSCode server files.
 The symlinks are created inside `include` directory, which is adjacent to the `build` and `athena` directories.
 The `include` directory itself is a symlink to the actual directory hosting the symlinks.
 The actual directory is given a unique name based on container name and `asetup` arguments to distinguish it from other `include` directories created in different conditions.

@@ -42,7 +42,7 @@ get_alrb () {
   export alrb_name
 }
 
-vscode_inc () {
+vscode_setup () {
   get_alrb || return 1
 
   build_dir=""
@@ -88,6 +88,11 @@ vscode_inc () {
 
   inc_dir_link=$dir/include
   ln -sfv $inc_dir $inc_dir_link
+
+  vscode_server_default=/home/$USER/.vscode-server-$alrb_name
+  vscode_server_target=$HOME/.vscode-server
+  mkdir -pv $vscode_server_default
+  ln -sfv $vscode_server_default $vscode_server_target
 
   return $ret_value
 }
