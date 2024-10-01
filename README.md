@@ -45,6 +45,7 @@ for d in `cat /etc/cvmfs/default.local | grep CVMFS_REPOSITORIES | tr '=' ' ' | 
 done
 ```
 
+If you get an error along the lines of `libprotobuf-lite.so*: cannot open shared object file` after a system-wide update, then make sure to rebuild `cvmfs` with `yay -S --rebuild cvmfs`.
 To verify after mounting that everything's correctly set up, run `cvmfs_config probe` and `cvmfs_config showconfig [domain.cern.ch]` to see if you get any errors. You might also want to consult logs in `CVMFS_DEBUGLOG`.
 
 If everything's fine, then start the Docker daemon with `systemctl start docker` and execute:
