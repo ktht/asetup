@@ -368,7 +368,8 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
       -DCMAKE_INSTALL_SYSCONFDIR=$PWD/../install/etc \
       -GNinja \
       -Wno-dev \
-      -DCMAKE_CXX_FLAGS="-DGLOG_USE_GLOG_EXPORT -march=native"
+      -DCMAKE_CXX_FLAGS="-DGLOG_USE_GLOG_EXPORT -march=native" \
+      ..
     ninja -j12 |& tee out.log
     ninja install
     ```
