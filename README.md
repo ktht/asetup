@@ -66,7 +66,7 @@ setupATLAS -c find=AnalysisBase,25.2.12 \
 source setup_venv.sh -v -i jupyter torch # in the container
 ```
 
-**TODO**: Try out the following Docker option when running `gdb` inside the contianer: `--cap-add=SYS_PTRACE --security-opt seccomp=unconfined`.
+You can try the following Docker option when running `gdb` inside the container but face some problems: `--cap-add=SYS_PTRACE --security-opt seccomp=unconfined`.
 
 Note that setting up `panda` does not work in this container; for that you need vanilla `el9` container.
 
