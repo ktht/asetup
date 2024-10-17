@@ -90,7 +90,7 @@ vscode_setup () {
   ln -sfv $inc_dir $inc_dir_link
 
   vscode_server_default=/home/$USER/.vscode-server-$alrb_name
-  vscode_server_target=$HOME/.vscode-server
+  vscode_server_target=$ALRB_CONT_DUMMYHOME/.vscode-server
   mkdir -pv $vscode_server_default
   ln -sfv $vscode_server_default $vscode_server_target
 
