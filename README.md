@@ -55,6 +55,7 @@ source setupATLAS.sh
 setupATLAS -c find=AnalysisBase,25.2.12 \
  --mount=/path/to/pem/certs:/alrb/.globus:delegated,ro \
  --mount=/path/to/vomses:/etc/vomses:delegated,ro \
+ --mount=$HOME/.ssh:$HOME/.ssh:delegated,ro \
  --mount=/host/path/to/athena:$HOME/athena:delegated \
  --afterrun="rmdir athena" \
  --mount=$PWD:$HOME:delegated \
