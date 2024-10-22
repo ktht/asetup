@@ -14,7 +14,10 @@ JSON_HEADERS = {
   'Accept'       : 'application/json',
   'Content-Type' : 'application/json',
 }
+
+# statuses not listed in the following: assigning, exhausted, paused, ready, registered, running, submitting, scouting, staged
 STATUSES = [ 'aborted', 'broken', 'done', 'failed', 'finished', 'pending', 'running' ]
+
 JOB_ID_RGX = re.compile(r'/\.(\d+)$')
 
 ANSI_RESET = '\033[0m'
@@ -26,14 +29,24 @@ ANSI_COLORS = {
 }
 ANSI_BOLD = '\033[1m'
 
+PANDA_ERRORS = {
+  'ddm:200'           : 'Expected output *.log.tgz is missing in pilot JSON',
+  'jobdispatcher:100' : 'Lost heartbeat',
+  'pilot:1137'        : 'Failed to stage-out file: *.tgz from the site, no protocol for provided setting found',
+  'pilot:1151'        : 'File transfer timed out during stage-in: *.tgz from the site, copy command timed out',
+  'pilot:1152'        : 'File transfer timed out during stage-out: *.tgz to a site, copy command timed out',
+  'sup:9000'          : 'Worker canceled by harvester due to held too long or not found',
+  'taskbuffer:300'    : 'The worker was cancelled while the job was starting',
+}
+
 
 def colorize(text: str, lower: bool = True) -> str:
   color = ''
-  if text in [ 'failed', 'broken', 'finished' ]:
+  if text in [ 'broken', 'failed', 'FAILED', 'finished' ]:
     color  = 'red'
-  elif text in [ 'FAILED', 'done' ]:
+  elif text in [ 'done', 'FINISHED' ]:
     color = 'green'
-  elif text == 'running':
+  elif text.lower() in [ 'starting', 'running' ]:
     color = 'blue'
   elif text == 'pending':
     color = 'grey'
@@ -126,8 +139,12 @@ def get_output_lfn(job_files: typing.List[dict], field_name: str) -> str:
   return 'n/a'
 
 
-def get_input_lfns(job_files: typing.List[dict], input_dataset: str) -> typing.List[str]:
-  return values_to_matching_keys(job_files, lambda dict_entry: dict_entry['type'] == 'input' and dict_entry['scope'] in input_dataset)
+def get_input_lfns(job_files: typing.List[dict], input_datasets: str) -> typing.List[str]:
+  return values_to_matching_keys(
+    job_files,
+    lambda dict_entry: dict_entry['type'] == 'input' and
+                       any(dict_entry['scope'] in input_dataset for input_dataset in input_datasets)
+  )
 
 
 def get_args():
@@ -152,6 +169,14 @@ def get_args():
   parser.add_argument(
     '-d', '--days', type = int, default = 14,
     help = 'Exclude those tasks that are not older than that',
+  )
+  parser.add_argument(
+    '-u', '--user', type = str, default = '', dest = 'user',
+    help = 'User whose tasks are shown',
+  )
+  parser.add_argument(
+    '-t', '--task-id', type = int, default = [], nargs = '+', dest = 'task_id',
+    help = 'Task IDs to filter',
   )
   return parser.parse_args()
 
@@ -209,7 +234,7 @@ def seconds_to_human_readable(seconds: int) -> str:
   if minutes > 0 or parts:
     parts.append(f'{minutes} {pluralize("minute", minutes)}')
   if seconds > 0 or parts:
-    parts.append(f'{seconds} {pluralize("second", seconds)}')
+    parts.append(f'{int(seconds)} {pluralize("second", seconds)}')
   return ', '.join(parts)
 
 
@@ -220,25 +245,37 @@ if __name__ == '__main__':
   statuses_exclude = args.status_exclude
   statuses_keep = ','.join(set(statuses_include) - set(statuses_exclude))
   #TODO errors and computing sites (per task, across all tasks)
+  # need to utilize as much information that's available in the task json as possible bc querying every job expensive
+  # query jobs explicitly if they are not listed in task error summary
   #TODO summary: input & output datasets, their completion rate, errors & sites
+  # dataset, completion rate
 
-  name = get_CRIC_name()
+  name = args.user if args.user else get_CRIC_name()
   tasks = pbook(name, contains = args.contains, status = statuses_keep, days = args.days)
   num_tasks = len(tasks)
+  print(boldify(f'Found {num_tasks} {pluralize("task", num_tasks)}'))
+
+  error_messages = {}
+
   for task_idx, task in enumerate(tasks):
     task_id = task['jeditaskid']
+    if args.task_id and task_id not in args.task_id:
+      continue
 
     task_datasets = task['datasets']
-    dataset_in = ''
+    datasets_in = []
     datasets_out = []
     for task_dataset in task_datasets:
-      if task_dataset['streamname'] == 'IN':
-        dataset_in = task_dataset['datasetname']
+      if task_dataset['streamname'].startswith('IN'):
+        datasets_in.append(task_dataset['datasetname'])
       elif task_dataset['streamname'] == 'OUTPUT0':
         datasets_out.append(task_dataset['datasetname'])
 
     print(f'{boldify("TASK")} {task_id}:')
-    print(f'  {boldify("IN")}:     {dataset_in if dataset_in else "n/a"}')
+    print(f'  {boldify("IN")}:     {datasets_in[0] if datasets_in else "n/a"}')
+    if len(datasets_in) > 1:
+      for dataset_in in datasets_in:
+        print(f'          {dataset_in}')
     print(f'  {boldify("OUT")}:    {datasets_out[0] if datasets_out else "n/a"}')
     if len(datasets_out) > 1:
       for dataset_out in datasets_out:
@@ -246,7 +283,7 @@ if __name__ == '__main__':
 
     task_status = task['status']
     progress = ''
-    if dataset_in:
+    if datasets_in:
       dsinfo = task['dsinfo']
       nfiles = dsinfo['nfiles']
       nfiles_finished = dsinfo['nfilesfinished']
@@ -255,7 +292,7 @@ if __name__ == '__main__':
       pct = nevents_processed / nevents * 100
       nevents_str = int_to_si(nevents)
       nevents_processed_str = int_to_si(nevents_processed)
-      progress = f' ({nfiles_finished}/{nfiles} files, {nevents_processed_str}/{nevents_str} events, {pct:.0f}%)'
+      progress = f' ({nfiles_finished}/{nfiles} {pluralize("file", nfiles)}, {nevents_processed_str}/{nevents_str} events, {pct:.0f}%)'
     print(f'  {boldify("STATUS")}: {colorize(task_status)}{progress}')
 
     task_content = get_task(task_id)
@@ -263,7 +300,7 @@ if __name__ == '__main__':
     unique_jobs = {}
     for job_info in task_jobs:
       if job_info['prodsourcelabel'] != 'user':
-        # Skip buildGen transformation jobs
+        # Consider only user runGen jobs
         continue
 
       jobid = job_info['pandaid']
@@ -273,21 +310,21 @@ if __name__ == '__main__':
 
       if jobid_original not in unique_jobs:
         unique_jobs[jobid_original] = []
-      unique_jobs[jobid_original].append(jobid)
+      unique_jobs[jobid_original].append({ 'id': jobid })
 
-    print(f'  {boldify("JOBS")} ({len(unique_jobs)} chains):')
+    print(f'  {boldify("JOBS")} ({len(unique_jobs)} {pluralize("chain", len(unique_jobs))}):')
     earliest_time = time.time()
     latest_time = 0
     for jobid_original in unique_jobs:
-      unique_jobs[jobid_original] = list(sorted(unique_jobs[jobid_original]))
+      unique_jobs[jobid_original] = list(sorted(unique_jobs[jobid_original], key = lambda kv: kv['id']))
 
-      first_job_id = unique_jobs[jobid_original][0]
-      latest_job_id = unique_jobs[jobid_original][-1]
+      first_job_id = unique_jobs[jobid_original][0]['id']
+      latest_job_id = unique_jobs[jobid_original][-1]['id']
 
       job_info = get_job(latest_job_id)
 
       job_files = job_info['files']
-      input_files = get_input_lfns(job_files, dataset_in)
+      input_files = get_input_lfns(job_files, datasets_in)
       output_file = get_output_lfn(job_files, 'output')
       log_file = get_output_lfn(job_files, 'log')
       if not input_files:
@@ -300,12 +337,13 @@ if __name__ == '__main__':
       earliest_time = min(earliest_time, job_chain_start)
       latest_time = max(latest_time, job_chain_end)
 
-      print(f'    {" -> ".join([ str(jobid) for jobid in unique_jobs[jobid_original] ])} ({job_chain_elapsed})')
+      print(f'    {" -> ".join([ str(jobid["id"]) for jobid in unique_jobs[jobid_original] ])} ({job_chain_elapsed})')
       print(f'        {input_files[0]} -> {output_file} ({log_file})')
       for input_file in input_files[1:]:
         print(f'        {input_file}')
       print(f'      => {colorize(job_info["job"]["jobstatus"].upper())}')
     print(f'  {boldify("TIME ELAPSED")}: {seconds_to_human_readable(latest_time - earliest_time)}')
 
+    print(json.dumps(task_content['errsByCount'], indent = 2))
     if task_idx < (num_tasks - 1):
       print('\n')
