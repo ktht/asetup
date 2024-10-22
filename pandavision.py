@@ -6,14 +6,43 @@ import requests
 import argparse
 import re
 import typing
+import datetime
+import time
 
 
 JSON_HEADERS = {
   'Accept'       : 'application/json',
   'Content-Type' : 'application/json',
 }
-STATUSES = [ 'aborted', 'broken', 'done', 'failed', 'finished' ]
+STATUSES = [ 'aborted', 'broken', 'done', 'failed', 'finished', 'pending', 'running' ]
 JOB_ID_RGX = re.compile(r'/\.(\d+)$')
+
+ANSI_RESET = '\033[0m'
+ANSI_COLORS = {
+  'red'   : '\033[31m',
+  'green' : '\033[32m',
+  'blue'  : '\033[34m',
+  'grey'  : '\033[90m'
+}
+ANSI_BOLD = '\033[1m'
+
+
+def colorize(text: str, lower: bool = True) -> str:
+  color = ''
+  if text in [ 'failed', 'broken', 'finished' ]:
+    color  = 'red'
+  elif text in [ 'FAILED', 'done' ]:
+    color = 'green'
+  elif text == 'running':
+    color = 'blue'
+  elif text == 'pending':
+    color = 'grey'
+  text_tf = text.lower() if lower else text
+  return ANSI_COLORS[color] + text_tf + ANSI_RESET if color else text_tf
+
+
+def boldify(text: str) -> str:
+  return ANSI_BOLD + text + ANSI_RESET
 
 
 def get_CRIC_name() -> str:
@@ -86,19 +115,19 @@ def get_job(job_id: int) -> dict:
   return get_json_request(r)
 
 
-def get_files(job_files: dict, dataset: str = '') -> typing.Tuple[str]:
-  input_file, output_file, log_file = '', '', ''
-  for job_file in job_files:
-    lfn = job_file['lfn']
+def values_to_matching_keys(list_of_dicts: typing.List[dict], condition: typing.Callable[[dict], bool]) -> typing.List[str]:
+  return [ dict_entry['lfn'] for dict_entry in list_of_dicts if condition(dict_entry) ]
 
-    if job_file['type'] == 'input' and job_file['dataset'] in dataset and not input_file:
-      input_file = lfn
-    elif job_file['type'] == 'output' and not output_file:
-      output_file = lfn
-    elif job_file['type'] == 'log' and not log_file:
-      log_file = lfn
 
-  return input_file, output_file, log_file
+def get_output_lfn(job_files: typing.List[dict], field_name: str) -> str:
+  matching_files = values_to_matching_keys(job_files, lambda dict_entry: dict_entry['type'] == field_name)
+  if matching_files:
+    return matching_files[0]
+  return 'n/a'
+
+
+def get_input_lfns(job_files: typing.List[dict], input_dataset: str) -> typing.List[str]:
+  return values_to_matching_keys(job_files, lambda dict_entry: dict_entry['type'] == 'input' and dict_entry['scope'] in input_dataset)
 
 
 def get_args():
@@ -127,19 +156,77 @@ def get_args():
   return parser.parse_args()
 
 
+def int_to_si(n: int) -> str:
+  sfxs = [ '', 'k', 'M', 'B' ]
+  idx = 0
+
+  while abs(n) >= 1000. and idx < len(sfxs) - 1:
+    idx += 1
+    n /= 1000.
+
+  return f'{n:.0f}{sfxs[idx]}'
+
+
+def date_to_unix(date: str) -> int:
+  return int(datetime.datetime.strptime(date, '%Y-%m-%dT%H:%M:%S').timestamp())
+
+
+def find_job_from_task(list_of_jobs: dict, job_id: int):
+  for job_info in list_of_jobs:
+    if job_info['pandaid'] == job_id:
+      return job_info
+  return {}
+
+
+def get_start_time(list_of_jobs: dict, job_id: int) -> int:
+  job_info = find_job_from_task(list_of_jobs, job_id)
+  assert(job_info)
+  return date_to_unix(job_info['creationtime'])
+
+
+def get_end_time(list_of_jobs: dict, job_id: int) -> int:
+  job_info = find_job_from_task(list_of_jobs, job_id)
+  assert(job_info)
+  return date_to_unix(job_info['endtime']) if job_info['endtime'] else int(time.time())
+
+
+def pluralize(word: str, count: int):
+  return f'{word}s' if count != 1 else word
+
+
+def seconds_to_human_readable(seconds: int) -> str:
+  days = seconds // (24 * 3600)
+  seconds %= (24 * 3600)
+  hours = seconds // 3600
+  seconds %= 3600
+  minutes = seconds // 60
+  seconds %= 60
+  parts = []
+  if days > 0:
+    parts.append(f'{days} {pluralize("day", days)}')
+  if hours > 0 or parts:
+    parts.append(f'{hours} {pluralize("hour", hours)}')
+  if minutes > 0 or parts:
+    parts.append(f'{minutes} {pluralize("minute", minutes)}')
+  if seconds > 0 or parts:
+    parts.append(f'{seconds} {pluralize("second", seconds)}')
+  return ', '.join(parts)
+
+
 if __name__ == '__main__':
   args = get_args()
 
   statuses_include = STATUSES if not args.status_include else args.status_include
   statuses_exclude = args.status_exclude
   statuses_keep = ','.join(set(statuses_include) - set(statuses_exclude))
+  #TODO errors and computing sites (per task, across all tasks)
+  #TODO summary: input & output datasets, their completion rate, errors & sites
 
   name = get_CRIC_name()
   tasks = pbook(name, contains = args.contains, status = statuses_keep, days = args.days)
-  for task in tasks:
+  num_tasks = len(tasks)
+  for task_idx, task in enumerate(tasks):
     task_id = task['jeditaskid']
-    if task_id != 41720333:
-      continue
 
     task_datasets = task['datasets']
     dataset_in = ''
@@ -150,16 +237,35 @@ if __name__ == '__main__':
       elif task_dataset['streamname'] == 'OUTPUT0':
         datasets_out.append(task_dataset['datasetname'])
 
-    print(f'{task_id}:')
-    print(f'  IN:  {dataset_in}')
-    print(f"  OUT: {datasets_out[0] if datasets_out else 'n/a'}")
+    print(f'{boldify("TASK")} {task_id}:')
+    print(f'  {boldify("IN")}:     {dataset_in if dataset_in else "n/a"}')
+    print(f'  {boldify("OUT")}:    {datasets_out[0] if datasets_out else "n/a"}')
     if len(datasets_out) > 1:
       for dataset_out in datasets_out:
-        print(f"       {dataset_out}")
+        print(f'          {dataset_out}')
+
+    task_status = task['status']
+    progress = ''
+    if dataset_in:
+      dsinfo = task['dsinfo']
+      nfiles = dsinfo['nfiles']
+      nfiles_finished = dsinfo['nfilesfinished']
+      nevents = dsinfo['neventsTot']
+      nevents_processed = dsinfo['neventsUsedTot']
+      pct = nevents_processed / nevents * 100
+      nevents_str = int_to_si(nevents)
+      nevents_processed_str = int_to_si(nevents_processed)
+      progress = f' ({nfiles_finished}/{nfiles} files, {nevents_processed_str}/{nevents_str} events, {pct:.0f}%)'
+    print(f'  {boldify("STATUS")}: {colorize(task_status)}{progress}')
 
     task_content = get_task(task_id)
+    task_jobs = task_content['jobs']
     unique_jobs = {}
-    for job_info in task_content['jobs']:
+    for job_info in task_jobs:
+      if job_info['prodsourcelabel'] != 'user':
+        # Skip buildGen transformation jobs
+        continue
+
       jobid = job_info['pandaid']
 
       jobid_original_match = JOB_ID_RGX.search(job_info['jobname'])
@@ -169,17 +275,37 @@ if __name__ == '__main__':
         unique_jobs[jobid_original] = []
       unique_jobs[jobid_original].append(jobid)
 
-    print(f'  JOBS:')
+    print(f'  {boldify("JOBS")} ({len(unique_jobs)} chains):')
+    earliest_time = time.time()
+    latest_time = 0
     for jobid_original in unique_jobs:
       unique_jobs[jobid_original] = list(sorted(unique_jobs[jobid_original]))
-      print(f'    {" -> ".join([ str(jobid) for jobid in unique_jobs[jobid_original] ])}')
 
+      first_job_id = unique_jobs[jobid_original][0]
       latest_job_id = unique_jobs[jobid_original][-1]
 
       job_info = get_job(latest_job_id)
 
       job_files = job_info['files']
-      input_file, output_file, log_file = get_files(job_files, dataset_in)
-      print(f'        {input_file} -> {output_file} ({log_file})')
+      input_files = get_input_lfns(job_files, dataset_in)
+      output_file = get_output_lfn(job_files, 'output')
+      log_file = get_output_lfn(job_files, 'log')
+      if not input_files:
+        continue
 
-      print(f"      => {job_info['job']['jobstatus'].upper()}")
+      job_chain_start = get_start_time(task_jobs, first_job_id)
+      job_chain_end = get_end_time(task_jobs, latest_job_id)
+      job_chain_elapsed = seconds_to_human_readable(job_chain_end - job_chain_start)
+
+      earliest_time = min(earliest_time, job_chain_start)
+      latest_time = max(latest_time, job_chain_end)
+
+      print(f'    {" -> ".join([ str(jobid) for jobid in unique_jobs[jobid_original] ])} ({job_chain_elapsed})')
+      print(f'        {input_files[0]} -> {output_file} ({log_file})')
+      for input_file in input_files[1:]:
+        print(f'        {input_file}')
+      print(f'      => {colorize(job_info["job"]["jobstatus"].upper())}')
+    print(f'  {boldify("TIME ELAPSED")}: {seconds_to_human_readable(latest_time - earliest_time)}')
+
+    if task_idx < (num_tasks - 1):
+      print('\n')
