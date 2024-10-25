@@ -8,6 +8,8 @@ import re
 import typing
 import datetime
 import time
+import tabulate
+import copy
 
 
 JSON_HEADERS = {
@@ -29,6 +31,7 @@ ANSI_COLORS = {
 }
 ANSI_BOLD = '\033[1m'
 
+PANDA_NO_ERROR = ''
 PANDA_ERRORS = {
   'ddm:200'           : 'Expected output *.log.tgz is missing in pilot JSON',
   'jobdispatcher:100' : 'Lost heartbeat',
@@ -37,6 +40,7 @@ PANDA_ERRORS = {
   'pilot:1152'        : 'File transfer timed out during stage-out: *.tgz to a site, copy command timed out',
   'sup:9000'          : 'Worker canceled by harvester due to held too long or not found',
   'taskbuffer:300'    : 'The worker was cancelled while the job was starting',
+  PANDA_NO_ERROR      : '(no errors)',
 }
 
 
@@ -238,15 +242,79 @@ def seconds_to_human_readable(seconds: int) -> str:
   return ', '.join(parts)
 
 
+def print_stats(site_stats: dict, site_attempts: dict, error_messages: dict, indentation: int = 0) -> None:
+  #print(json.dumps(site_stats, indent = 2))
+  #print(json.dumps(site_attempts, indent = 2))
+  HEADER = [ 'Site', 'Errors', 'Description', 'Attempts', 'Success rate [%]' ]
+  site_stats_sorted = list(sorted(site_stats.items(), key = lambda kv: sum(kw[1] for kw in kv[1].items()), reverse = True))
+  table_data = [ HEADER ]
+  for site_name, site_errors in site_stats_sorted:
+    attempts = site_attempts[site_name]
+    if not attempts:
+      continue
+
+    successes = 0 if PANDA_NO_ERROR not in site_errors else site_errors[PANDA_NO_ERROR]
+    site_errors_sorted = list(sorted(site_errors.items(), key = lambda kv: kv[1], reverse = True))
+
+    rows = []
+    for err_idx, err_data in enumerate(site_errors_sorted):
+      error_message = ''
+      err, err_count = err_data
+      if err in PANDA_ERRORS:
+        error_message = PANDA_ERRORS[err]
+      elif err in error_messages:
+        error_message = error_messages[err]
+      else:
+        raise RuntimeError(f'Could not find error message for the following code: {err}')
+
+      rows.append([
+        '' if err_idx else site_name,
+        f'{err} ({err_count})' if err != PANDA_NO_ERROR else '',
+        error_message,
+        '' if err_idx else attempts,
+        '' if err_idx else f'{successes / attempts * 100:.0f}%',
+      ])
+    table_data.extend(rows)
+  table = tabulate.tabulate(table_data, headers = 'firstrow', tablefmt = 'rounded_outline')
+  indented_table = '\n'.join(' ' * indentation + line for line in table.splitlines())
+  print(indented_table)
+
+
+def merge_stats(first: dict, second: dict) -> dict:
+  new = copy.deepcopy(first)
+  for site_name, site_data in second.items():
+    if site_name not in new:
+      new[site_name] = site_data
+    else:
+      for site_error, error_count in site_data.items():
+        if site_error not in new[site_name]:
+          new[site_name][site_error] = error_count
+        else:
+          new[site_name][site_error] += error_count
+  return new
+
+
+def merge_attempts(first: dict, second: dict) -> dict:
+  new = copy.deepcopy(first)
+  for site_name, nof_attempts in second.items():
+    if site_name in new:
+      new[site_name] += nof_attempts
+    else:
+      new[site_name] = nof_attempts
+  return new
+
+
+def get_job_id_str(job_info: dict) -> str:
+  job_id_str = str(job_info['id'])
+  return f'({job_id_str})' if job_info['is_reassigned'] else job_id_str
+
+
 if __name__ == '__main__':
   args = get_args()
 
   statuses_include = STATUSES if not args.status_include else args.status_include
   statuses_exclude = args.status_exclude
   statuses_keep = ','.join(set(statuses_include) - set(statuses_exclude))
-  #TODO errors and computing sites (per task, across all tasks)
-  # need to utilize as much information that's available in the task json as possible bc querying every job expensive
-  # query jobs explicitly if they are not listed in task error summary
   #TODO summary: input & output datasets, their completion rate, errors & sites
   # dataset, completion rate
 
@@ -256,6 +324,8 @@ if __name__ == '__main__':
   print(boldify(f'Found {num_tasks} {pluralize("task", num_tasks)}'))
 
   error_messages = {}
+  all_site_stats = {}
+  all_site_attempts = {}
 
   for task_idx, task in enumerate(tasks):
     task_id = task['jeditaskid']
@@ -297,7 +367,12 @@ if __name__ == '__main__':
 
     task_content = get_task(task_id)
     task_jobs = task_content['jobs']
+    task_errs = task_content['errsByCount']
+
     unique_jobs = {}
+    task_site_stats = {}
+    task_site_attempts = {}
+
     for job_info in task_jobs:
       if job_info['prodsourcelabel'] != 'user':
         # Consider only user runGen jobs
@@ -308,18 +383,30 @@ if __name__ == '__main__':
       jobid_original_match = JOB_ID_RGX.search(job_info['jobname'])
       jobid_original = int(jobid_original_match.group(1)) if jobid_original_match else jobid
 
+      jobid_str = str(jobid)
+      job_errs = []
+      for task_err in task_errs:
+        if jobid_str in task_err['pandalist']:
+          error_code = task_err['error']
+          if error_code not in PANDA_ERRORS and error_code not in error_messages:
+            error_messages[error_code] = task_err['diag']
+          job_errs.append(error_code)
+
       if jobid_original not in unique_jobs:
         unique_jobs[jobid_original] = []
-      unique_jobs[jobid_original].append({ 'id': jobid })
+      job_site = job_info['computingsite']
+      is_reassigned = 'reassigned' in job_info['jobinfo']
+      unique_jobs[jobid_original].append({ 'id': jobid, 'site' : job_site, 'errs' : job_errs, 'is_reassigned' : is_reassigned })
 
-    print(f'  {boldify("JOBS")} ({len(unique_jobs)} {pluralize("chain", len(unique_jobs))}):')
+
+    print(f'  {boldify("JOBS")} ({len(unique_jobs)}):')
     earliest_time = time.time()
     latest_time = 0
     for jobid_original in unique_jobs:
-      unique_jobs[jobid_original] = list(sorted(unique_jobs[jobid_original], key = lambda kv: kv['id']))
+      unique_jobs_id = list(sorted(unique_jobs[jobid_original], key = lambda kv: kv['id']))
 
-      first_job_id = unique_jobs[jobid_original][0]['id']
-      latest_job_id = unique_jobs[jobid_original][-1]['id']
+      first_job_id = unique_jobs_id[0]['id']
+      latest_job_id = unique_jobs_id[-1]['id']
 
       job_info = get_job(latest_job_id)
 
@@ -337,13 +424,60 @@ if __name__ == '__main__':
       earliest_time = min(earliest_time, job_chain_start)
       latest_time = max(latest_time, job_chain_end)
 
-      print(f'    {" -> ".join([ str(jobid["id"]) for jobid in unique_jobs[jobid_original] ])} ({job_chain_elapsed})')
-      print(f'        {input_files[0]} -> {output_file} ({log_file})')
+      job_ids_per_line = 8
+      job_chain_str = ''
+      job_chain_str_indent = ''
+      num_unique_jobs_id = len(unique_jobs_id)
+      for line_num in range(0, num_unique_jobs_id, job_ids_per_line):
+        if line_num > 0:
+          job_chain_str += ' ->\n'
+        job_chain_chunk = unique_jobs_id[line_num:line_num + job_ids_per_line]
+        if not job_chain_str_indent:
+          job_chain_str_indent = ' ' * (len(str(job_chain_chunk[0]['id'])) + 4) + ' -> '
+        else:
+          job_chain_str += job_chain_str_indent
+        job_chain_str += ' -> '.join([ get_job_id_str(job_chunk) for job_chunk in job_chain_chunk ])
+      print(f'    {job_chain_str}')
+      print(f'        # resubmissions: {num_unique_jobs_id - 1}')
+      print(f'        time elapsed:    {job_chain_elapsed}')
+      print(f'        log file:        {log_file}')
+      print(f'        inputs:          {input_files[0]}')
       for input_file in input_files[1:]:
-        print(f'        {input_file}')
-      print(f'      => {colorize(job_info["job"]["jobstatus"].upper())}')
-    print(f'  {boldify("TIME ELAPSED")}: {seconds_to_human_readable(latest_time - earliest_time)}')
+        print(f'                         {input_file}')
+      print(f'        output:          {output_file}')
+      print(f'        status:          {colorize(job_info["job"]["jobstatus"].upper())}')
+      #print(json.dumps(unique_jobs_id, indent = 2))
 
-    print(json.dumps(task_content['errsByCount'], indent = 2))
-    if task_idx < (num_tasks - 1):
-      print('\n')
+      site_stats = {}
+      site_attempts = {}
+      for job_stats in unique_jobs_id:
+        site = job_stats['site']
+        errs = job_stats['errs']
+        if site not in site_stats:
+          site_stats[site] = {}
+        if site not in site_attempts:
+          site_attempts[site] = 0
+
+        if not job_stats['is_reassigned']:
+          for err in errs:
+            if err not in site_stats[site]:
+              site_stats[site][err] = 0
+            site_stats[site][err] += 1
+          if not errs :
+            if PANDA_NO_ERROR not in site_stats[site]:
+              site_stats[site][PANDA_NO_ERROR] = 0
+            site_stats[site][PANDA_NO_ERROR] += 1
+
+          site_attempts[site] += 1
+      print_stats(site_stats, site_attempts, error_messages, 4)
+
+      task_site_stats = merge_stats(task_site_stats, site_stats)
+      task_site_attempts = merge_attempts(task_site_attempts, site_attempts)
+
+    print(f'  {boldify("TOTAL TIME ELAPSED")}: {seconds_to_human_readable(latest_time - earliest_time)}')
+    print_stats(task_site_stats, task_site_attempts, error_messages, 2)
+
+    all_site_stats = merge_stats(all_site_stats, task_site_stats)
+    all_site_attempts = merge_attempts(all_site_attempts, task_site_attempts)
+
+  print_stats(all_site_stats, all_site_attempts, error_messages)
