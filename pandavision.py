@@ -11,6 +11,8 @@ import time
 import tabulate
 import copy
 
+from rucio.client import Client
+
 
 JSON_HEADERS = {
   'Accept'       : 'application/json',
@@ -243,11 +245,8 @@ def seconds_to_human_readable(seconds: int) -> str:
 
 
 def print_stats(site_stats: dict, site_attempts: dict, error_messages: dict, indentation: int = 0) -> None:
-  #print(json.dumps(site_stats, indent = 2))
-  #print(json.dumps(site_attempts, indent = 2))
-  HEADER = [ 'Site', 'Errors', 'Description', 'Attempts', 'Success rate [%]' ]
   site_stats_sorted = list(sorted(site_stats.items(), key = lambda kv: sum(kw[1] for kw in kv[1].items()), reverse = True))
-  table_data = [ HEADER ]
+  table_data = [ [ 'Site', 'Errors', 'Description', 'Attempts', 'Success rate [%]' ] ]
   for site_name, site_errors in site_stats_sorted:
     attempts = site_attempts[site_name]
     if not attempts:
@@ -269,7 +268,7 @@ def print_stats(site_stats: dict, site_attempts: dict, error_messages: dict, ind
 
       rows.append([
         '' if err_idx else site_name,
-        f'{err} ({err_count})' if err != PANDA_NO_ERROR else '',
+        f'{err} ({err_count})' if err != PANDA_NO_ERROR else f'({err_count})',
         error_message,
         '' if err_idx else attempts,
         '' if err_idx else f'{successes / attempts * 100:.0f}%',
@@ -306,7 +305,82 @@ def merge_attempts(first: dict, second: dict) -> dict:
 
 def get_job_id_str(job_info: dict) -> str:
   job_id_str = str(job_info['id'])
-  return f'({job_id_str})' if job_info['is_reassigned'] else job_id_str
+  return f'({job_id_str})' if job_info['is_retasked'] else job_id_str
+
+
+def extract_scope_and_name(dataset: str) -> dict:
+  if dataset.endswith('/'):
+    dataset = dataset[:-1]
+  if ':' in dataset:
+    dataset_split = dataset.split(':')
+    return { 'scope' : dataset_split[0], 'name' : dataset_split[1] }
+  if dataset.startswith('user.'):
+    return { 'scope' : dataset[:dataset.find('.', dataset.find('.') + 1)], 'name' : dataset }
+  raise RuntimeError(f'Unable to extract scope and name from: {dataset}')
+
+
+def list_replica_sites(client: Client, scope: str, name: str) -> dict:
+  gen = client.list_replicas([ { 'scope' : scope, 'name' : name } ])
+  replica = None
+  for tmp in gen:
+    assert(not replica)
+    replica = tmp
+  return list(sorted([ k for k, v in replica['states'].items() if v == 'AVAILABLE' ]))
+
+
+def print_dataset_info(client: Client, dataset: str, indent: int = 0) -> dict:
+  scope_name = extract_scope_and_name(dataset)
+  gen = client.list_files(**scope_name)
+  space = ' ' * indent
+  dataset_info = { dataset : {} }
+  for f in gen:
+    sites = list_replica_sites(client, f['scope'], f['name'])
+    dataset_info[dataset][f['name']] = { 'nevents' : f['events'], 'sites' : sites }
+
+    dataset_str = f'{space}{f["name"]}: '
+    if f['events'] is not None:
+      dataset_str += f'{f["events"]} events, '
+    num_sites = len(sites)
+    dataset_str += f'{num_sites} {pluralize("site", num_sites)} ({", ".join(sites)})'
+    print(dataset_str)
+
+  return dataset_info
+
+
+def print_summary(tasks_summary: dict):
+  table_data = [ [ 'Task ID', 'Datasets', 'Attempts', 'Files', 'Events', 'Completed [%]', 'Status' ] ]
+  datasets_to_copy = []
+  tasks_sorted = list(sorted(tasks_summary.items(), key = lambda kv: kv[1]['percentage'], reverse = True))
+  for task_id, task_data in tasks_sorted:
+    rows = [[
+      task_id,
+      'IN:  ' + boldify(extract_scope_and_name(task_data['datasets_in'][0])['name']),
+      task_data['total_attempts'],
+      f'{task_data["nfiles_done"]}/{task_data["nfiles_out"]}',
+      f'{boldify(task_data["nevents_processed"])}/{task_data["nevents"]}',
+      boldify(f'{task_data["percentage"]:3.1f}'),
+      colorize(task_data['status']),
+    ]]
+
+    for dataset_in in task_data['datasets_in'][1:]:
+      rows.append([ '', f'     {boldify(extract_scope_and_name(dataset_in)["name"])}', '', '', '', '', '' ])
+    for dataset_idx, dataset_out in enumerate(task_data['datasets_out']):
+      rows.append([ '', f'{"    " if dataset_idx else "OUT:"} {extract_scope_and_name(dataset_out)["name"]}', '', '', '', '', '' ])
+
+    datasets_to_copy.extend(task_data['datasets_out'])
+    table_data.extend(rows)
+
+  table = tabulate.tabulate(table_data, headers = 'firstrow', tablefmt = 'rounded_outline', stralign = 'left')
+  print(table)
+
+  if datasets_to_copy:
+    print(f'\nTo download all {len(datasets_to_copy)} datasets with rucio, use the following command:\n')
+    print('  rucio download \\')
+    for dataset_idx, dataset_name in enumerate(datasets_to_copy):
+      str_to_print = dataset_name
+      if dataset_idx < len(datasets_to_copy) - 1:
+        str_to_print += ' \\'
+      print(f'    {str_to_print}')
 
 
 if __name__ == '__main__':
@@ -315,8 +389,8 @@ if __name__ == '__main__':
   statuses_include = STATUSES if not args.status_include else args.status_include
   statuses_exclude = args.status_exclude
   statuses_keep = ','.join(set(statuses_include) - set(statuses_exclude))
-  #TODO summary: input & output datasets, their completion rate, errors & sites
-  # dataset, completion rate
+
+  rucio_client = Client()
 
   name = args.user if args.user else get_CRIC_name()
   tasks = pbook(name, contains = args.contains, status = statuses_keep, days = args.days)
@@ -326,6 +400,8 @@ if __name__ == '__main__':
   error_messages = {}
   all_site_stats = {}
   all_site_attempts = {}
+
+  tasks_summary = {}
 
   for task_idx, task in enumerate(tasks):
     task_id = task['jeditaskid']
@@ -338,20 +414,35 @@ if __name__ == '__main__':
     for task_dataset in task_datasets:
       if task_dataset['streamname'].startswith('IN'):
         datasets_in.append(task_dataset['datasetname'])
-      elif task_dataset['streamname'] == 'OUTPUT0':
+      elif task_dataset['streamname'] == 'OUTPUT0' and task_dataset['nfiles'] > 0:
         datasets_out.append(task_dataset['datasetname'])
 
+    dataset_in_info = {}
+    dataset_out_info = {}
     print(f'{boldify("TASK")} {task_id}:')
     print(f'  {boldify("IN")}:     {datasets_in[0] if datasets_in else "n/a"}')
+    if datasets_in:
+      dataset_in_info.update(print_dataset_info(rucio_client, datasets_in[0], 12))
     if len(datasets_in) > 1:
-      for dataset_in in datasets_in:
+      for dataset_in in datasets_in[1:]:
         print(f'          {dataset_in}')
+        dataset_in_info.update(print_dataset_info(rucio_client, dataset_in, 12))
     print(f'  {boldify("OUT")}:    {datasets_out[0] if datasets_out else "n/a"}')
+    if datasets_out:
+      dataset_out_info.update(print_dataset_info(rucio_client, datasets_out[0], 12))
     if len(datasets_out) > 1:
-      for dataset_out in datasets_out:
+      for dataset_out in datasets_out[1:]:
         print(f'          {dataset_out}')
+        dataset_out_info.update(print_dataset_info(rucio_client, dataset_out, 12))
 
     task_status = task['status']
+    tasks_summary[task_id] = {
+      'datasets_in'    : datasets_in,
+      'datasets_out'   : datasets_out,
+      'total_attempts' : 0,
+      'status'         : task_status,
+    }
+
     progress = ''
     if datasets_in:
       dsinfo = task['dsinfo']
@@ -362,6 +453,15 @@ if __name__ == '__main__':
       pct = nevents_processed / nevents * 100
       nevents_str = int_to_si(nevents)
       nevents_processed_str = int_to_si(nevents_processed)
+
+      tasks_summary[task_id].update({
+        'nfiles_out' : nfiles,
+        'nfiles_done' : nfiles_finished,
+        'nevents' : nevents_str,
+        'nevents_processed' : nevents_processed_str,
+        'percentage' : pct,
+      })
+
       progress = f' ({nfiles_finished}/{nfiles} {pluralize("file", nfiles)}, {nevents_processed_str}/{nevents_str} events, {pct:.0f}%)'
     print(f'  {boldify("STATUS")}: {colorize(task_status)}{progress}')
 
@@ -395,8 +495,8 @@ if __name__ == '__main__':
       if jobid_original not in unique_jobs:
         unique_jobs[jobid_original] = []
       job_site = job_info['computingsite']
-      is_reassigned = 'reassigned' in job_info['jobinfo']
-      unique_jobs[jobid_original].append({ 'id': jobid, 'site' : job_site, 'errs' : job_errs, 'is_reassigned' : is_reassigned })
+      is_retasked = job_info['taskbuffererrorcode'] != 0 # reassigned by jedi or killed by panda
+      unique_jobs[jobid_original].append({ 'id': jobid, 'site' : job_site, 'errs' : job_errs, 'is_retasked' : is_retasked })
 
 
     print(f'  {boldify("JOBS")} ({len(unique_jobs)}):')
@@ -446,7 +546,6 @@ if __name__ == '__main__':
         print(f'                         {input_file}')
       print(f'        output:          {output_file}')
       print(f'        status:          {colorize(job_info["job"]["jobstatus"].upper())}')
-      #print(json.dumps(unique_jobs_id, indent = 2))
 
       site_stats = {}
       site_attempts = {}
@@ -458,7 +557,7 @@ if __name__ == '__main__':
         if site not in site_attempts:
           site_attempts[site] = 0
 
-        if not job_stats['is_reassigned']:
+        if not job_stats['is_retasked']:
           for err in errs:
             if err not in site_stats[site]:
               site_stats[site][err] = 0
@@ -474,10 +573,17 @@ if __name__ == '__main__':
       task_site_stats = merge_stats(task_site_stats, site_stats)
       task_site_attempts = merge_attempts(task_site_attempts, site_attempts)
 
+      tasks_summary[task_id]['total_attempts'] += sum(site_attempts.values())
+
     print(f'  {boldify("TOTAL TIME ELAPSED")}: {seconds_to_human_readable(latest_time - earliest_time)}')
     print_stats(task_site_stats, task_site_attempts, error_messages, 2)
+
 
     all_site_stats = merge_stats(all_site_stats, task_site_stats)
     all_site_attempts = merge_attempts(all_site_attempts, task_site_attempts)
 
+    if task_idx < (num_tasks - 1):
+      print('\n\n')
+
   print_stats(all_site_stats, all_site_attempts, error_messages)
+  print_summary(tasks_summary)
