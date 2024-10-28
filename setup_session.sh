@@ -17,6 +17,8 @@ touch $HISTFILE
 export HISTSIZE=10000
 export SAVEHIST=10000
 
+export PATH=$PATH:/home/$USER
+
 if [ "$SHELL" = "/bin/bash" ]; then
   shopt -s histappend
 else
