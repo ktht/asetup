@@ -42,6 +42,7 @@ PANDA_ERRORS = {
   'pilot:1152'        : 'File transfer timed out during stage-out: *.tgz to a site, copy command timed out',
   'sup:9000'          : 'Worker canceled by harvester due to held too long or not found',
   'taskbuffer:300'    : 'The worker was cancelled while the job was starting',
+  'pilot:1326'        : 'No matching replicas were found (failed to transfer files using rucio)',
   PANDA_NO_ERROR      : '(no errors)',
 }
 
