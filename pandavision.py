@@ -19,7 +19,7 @@ JSON_HEADERS = {
   'Content-Type' : 'application/json',
 }
 
-# statuses not listed in the following: assigning, exhausted, paused, ready, registered, running, submitting, scouting, staged
+# statuses not listed in the following: (activated?), assigning, exhausted, paused, ready, registered, running, submitting, scouting, (starting?), staged
 STATUSES = [ 'aborted', 'broken', 'done', 'failed', 'finished', 'pending', 'running' ]
 
 JOB_ID_RGX = re.compile(r'/\.(\d+)$')
@@ -351,15 +351,16 @@ def print_dataset_info(client: Client, dataset: str, indent: int = 0) -> dict:
 def print_summary(tasks_summary: dict):
   table_data = [ [ 'Task ID', 'Datasets', 'Attempts', 'Files', 'Events', 'Completed [%]', 'Status' ] ]
   datasets_to_copy = []
-  tasks_sorted = list(sorted(tasks_summary.items(), key = lambda kv: kv[1]['percentage'], reverse = True))
+  tasks_sorted = list(sorted(tasks_summary.items(), key = lambda kv: kv[1]['percentage'] if 'percentage' in kv[1] else 0, reverse = True))
   for task_id, task_data in tasks_sorted:
+    has_datasets_in = bool(task_data['datasets_in'])
     rows = [[
       task_id,
-      'IN:  ' + boldify(extract_scope_and_name(task_data['datasets_in'][0])['name']),
+      'IN:  ' + boldify(extract_scope_and_name(task_data['datasets_in'][0])['name'] if has_datasets_in else 'n/a'),
       task_data['total_attempts'],
-      f'{task_data["nfiles_done"]}/{task_data["nfiles_out"]}',
-      f'{boldify(task_data["nevents_processed"])}/{task_data["nevents"]}',
-      boldify(f'{task_data["percentage"]:3.1f}'),
+      f'{task_data["nfiles_done"]}/{task_data["nfiles_out"]}' if has_datasets_in else 'n/a',
+      f'{boldify(task_data["nevents_processed"])}/{task_data["nevents"]}' if has_datasets_in else 'n/a',
+      boldify(f'{task_data["percentage"]:3.1f}' if has_datasets_in else 'n/a'),
       colorize(task_data['status']),
     ]]
 
@@ -497,7 +498,14 @@ if __name__ == '__main__':
         unique_jobs[jobid_original] = []
       job_site = job_info['computingsite']
       is_retasked = job_info['taskbuffererrorcode'] != 0 # reassigned by jedi or killed by panda
-      unique_jobs[jobid_original].append({ 'id': jobid, 'site' : job_site, 'errs' : job_errs, 'is_retasked' : is_retasked })
+      is_done = job_info['jobstatus'] in [ 'failed', 'finished' ]
+      unique_jobs[jobid_original].append({
+        'id'          : jobid,
+        'site'        : job_site,
+        'errs'        : job_errs,
+        'is_retasked' : is_retasked,
+        'is_done'     : is_done,
+      })
 
 
     print(f'  {boldify("JOBS")} ({len(unique_jobs)}):')
@@ -515,7 +523,7 @@ if __name__ == '__main__':
       input_files = get_input_lfns(job_files, datasets_in)
       output_file = get_output_lfn(job_files, 'output')
       log_file = get_output_lfn(job_files, 'log')
-      if not input_files:
+      if not input_files and datasets_in:
         continue
 
       job_chain_start = get_start_time(task_jobs, first_job_id)
@@ -542,9 +550,11 @@ if __name__ == '__main__':
       print(f'        # resubmissions: {num_unique_jobs_id - 1}')
       print(f'        time elapsed:    {job_chain_elapsed}')
       print(f'        log file:        {log_file}')
-      print(f'        inputs:          {input_files[0]}')
-      for input_file in input_files[1:]:
-        print(f'                         {input_file}')
+      if input_files:
+        for input_file in input_files:
+          print(f'                         {input_file}')
+      else:
+        print(f'        inputs:          n/a')
       print(f'        output:          {output_file}')
       print(f'        status:          {colorize(job_info["job"]["jobstatus"].upper())}')
 
@@ -558,7 +568,7 @@ if __name__ == '__main__':
         if site not in site_attempts:
           site_attempts[site] = 0
 
-        if not job_stats['is_retasked']:
+        if not job_stats['is_retasked'] and job_stats['is_done']:
           for err in errs:
             if err not in site_stats[site]:
               site_stats[site][err] = 0
