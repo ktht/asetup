@@ -104,6 +104,7 @@ The Docker container has the following features:
         print(torch.cuda.get_device_name(0))
     ```
 
+    NB! Enabling GPU passthrough will append `&nvidia` string at the end of `$ALRB_USER_PLATFORM` after `asetup`. When submitting grid jobs from this container to PanDA, it has the effect of requesting nodes with GPU support. If you plan to submit grid jobs but don't need GPUs for it, then don't enable GPU passthrough;
 - access to ATLAS VOMS, rucio and AMI services (thanks to mounting the `/alrb/.globus` and `/etc/vomses` directories):
 
     ```
