@@ -43,3 +43,13 @@ get_alrb () {
   fi
   export alrb_name
 }
+
+vscode_setup () {
+  get_alrb || return 1
+
+  vscode_server_default=/home/$USER/.vscode-server-$alrb_name
+  vscode_server_target=$ALRB_CONT_DUMMYHOME/.vscode-server
+
+  mkdir -pv $vscode_server_default
+  ln -sfv $vscode_server_default $vscode_server_target
+}
