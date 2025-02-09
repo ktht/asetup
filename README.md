@@ -166,7 +166,7 @@ eos ls /eos/...
 
 ## How to install EOS client on a local Arch(-like) machine
 
-We're  trying to install the latest version of the [EOS](https://github.com/cern-eos/eos/) package, which at the time of writing is `5.2.24`.
+We're  trying to install the latest version of the [EOS](https://github.com/cern-eos/eos/) package, which at the time of writing is `5.3.1`.
 
 1. make sure that the following dependencies are installed via arch package manager
 
@@ -177,18 +177,18 @@ We're  trying to install the latest version of the [EOS](https://github.com/cern
               libevent jemalloc
     ```
 
-2. Although [`xrootd`](https://github.com/xrootd/xrootd) is readily available in [Arch repositories](https://gitlab.archlinux.org/archlinux/packaging/packages/xrootd), it's lagging behind: The latest release is `5.7.0`, while the latest package that's available in the Arch repositories is `5.6.4`. Unfortunately, the latter is incompatible with the EOS package since EOS version (5.2.13). The earliest `xrootd` version that's probably compatible with the new header structure is `5.6.7`. However, there's no reason to switch to some old version; instead we'll try to install the latest `xrootd` onto our system, which currently happens to be `5.7.0`. To achieve this, we'll create the following `PKGBUILD` file:
+2. Although [`xrootd`](https://github.com/xrootd/xrootd) is readily available in [Arch repositories](https://gitlab.archlinux.org/archlinux/packaging/packages/xrootd), it's lagging behind: The latest release is `5.7.3`, while the latest package that's available in the Arch repositories is `5.7.2`. Unfortunately, the latter is incompatible with the EOS package we want to install.However, there's no reason to switch to some old version of EOS; instead we'll try to install the latest `xrootd` onto our system, which currently happens to be `5.7.3`. To achieve this, we'll create the following `PKGBUILD` file:
 
     ```
     pkgname=xrootd
-    pkgver=5.7.0
+    pkgver=5.7.3
     pkgrel=1
     pkgdesc="Software framework for fast, low latency, scalable and fault tolerant data access."
     arch=('x86_64')
     url="https://xrootd.slac.stanford.edu/"
     license=('LGPL-3.0-or-later')
-    source=("https://github.com/xrootd/xrootd/archive/refs/tags/v5.7.0.tar.gz")
-    sha256sums=('7a4e5809edd426e6bde7de4848ccc7bcddd33a950b4b3899837ace377292cac8')
+    source=("https://github.com/xrootd/xrootd/archive/refs/tags/v5.7.3.tar.gz")
+    sha256sums=('e9d8987c16133c421571a50a26e6e4f19278f7dedc517f0fa32c5ab97fd3145a')
 
     build() {
       cd "${srcdir}/${pkgname}-${pkgver}"
@@ -204,14 +204,42 @@ We're  trying to install the latest version of the [EOS](https://github.com/cern
     }
     ```
 
-The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that the `PKGBUILD` file is configured correctly with `namcap PKGBUILD`. Then proceed to build the package with `makepkg`. If everything succeeded, then install the package with `pacman -U xrootd-5.7.0-1-x86_64.pkg.tar.zst`.
+    Note that if you're using OpenSSL 3.4.0 or later, and `xrootd` hasn't caught up yet, then you might have to apply a patch to it. To do so, create a file called `openssl.patch` with the following contents (created using `diff -ura` and manually edited to use relative paths):
+
+    ```diff
+    --- ./src/XrdTls/XrdTlsContext.cc       2025-01-28 10:17:17.000000000 +0000
+    +++ ./src/XrdTls/XrdTlsContext.cc       2025-02-09 14:38:55.000000000 +0000
+    @@ -229,7 +229,7 @@
+    // Flush the cache
+    //
+        tNow = time(0);
+    -   SSL_CTX_flush_sessions(ctxImpl->ctx, tNow);
+    +   SSL_CTX_flush_sessions_ex(ctxImpl->ctx, tNow);
+
+    // Print some stuff should debugging be on
+    //
+    ```
+
+    Then edit `source` and `sha256sums` arrays in the `PKGBUILD` file to include `openssl.patch` and its `sha256sum` checksum, followed by `prepare()` function to apply the patch:
+
+    ```
+    source=("https://github.com/xrootd/xrootd/archive/refs/tags/v5.7.3.tar.gz" "openssl.patch")
+    sha256sums=('e9d8987c16133c421571a50a26e6e4f19278f7dedc517f0fa32c5ab97fd3145a' '80106829bd85c75b1efc19b9941f0c19e96636847d89a2bd645dcd554435b851')
+
+    prepare() {
+        cd "${srcdir}/${pkgname}-${pkgver}"
+        patch -Np1 -i ../../openssl.patch
+    }
+    ```
+
+    Check that the `PKGBUILD` file is configured correctly with `namcap PKGBUILD`. Then proceed to build the package with `makepkg`. If everything succeeded, then install the package with `pacman -U xrootd-5.7.3-1-x86_64.pkg.tar.zst`.
 
 3. Install [isa-l](https://github.com/intel/isa-l) and [isa-l_crypto](https://github.com/intel/isa-l_crypto) packages by following the instruction given in those repositories. Here's how it's done for `isa-l`, for example:
 
     ```
     git clone https://github.com/intel/isa-l.git
     cd isa-l
-    git clone -b v2.31 tags/v2.31 # or some later version
+    git checkout -b v2.31.1 tags/v2.31.1 # or some later version
     ./autogen.sh
     ./configure --prefix=$PWD/install --libdir=$PWD/install/lib
     make
@@ -220,15 +248,18 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
 
     The procedure is identical for `isa-l_crypto`, apart from its version which doesn't necessarily match the version of `isa-l`. At the time of writing, the latest version of `isa-l_crypto` is `v2.25.0`.
 
+    Note that you need to install `nasm`/`yasm` and `help2man` before `make`-ing it.
+
 4. A keen eye reading the [EOS documentation](https://github.com/cern-eos/eos/blob/master/README.md) might spot that EOS has two additional dependencies: `eos-folly` and `eos-rocksdb`. Both correspond to custom builds of [`rocksdb`](https://github.com/facebook/rocksdb) and [`folly`](https://github.com/facebook/folly). The build configurations are detailed in the `*.spec` files of [`eos-rocksdb`](https://gitlab.cern.ch/eos/eos-rocksdb) and [`eos-folly`](https://gitlab.cern.ch/eos/eos-folly) repositories. The `*.patch` files are irrelevant because both packages already include the described changes.
 
     Although `rocksdb` is also available as [Arch package](https://gitlab.archlinux.org/archlinux/packaging/packages/rocksdb), it does not include the `librocksdb_tools.so` library, which is linked against EOS build.
-    Thus, to build `rocksdb`, follow these instructions:
+    Make sure to have `glfags` installed, or else you'll get linking error when building EOS.
+    To build `rocksdb`, follow these instructions:
 
     ```
     git clone https://github.com/facebook/rocksdb.git
     cd rocksdb
-    git checkout -b v9.5.2 tags/v9.5.2 # or later
+    git checkout -b v9.10.0 tags/v9.10.0 # or later
     PREFIX=$PWD/install PORTABLE=1 DISABLE_JEMALLOC=1 OPT='-fPIC -DNDEBUG -O3' make shared_lib tools_lib USE_RTTI=1 DEBUG_LEVEL=0 -j12
     PREFIX=$PWD/install make install-shared
     cp librocksdb_tools.so install/lib/.
@@ -265,8 +296,8 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     ```
     git clone https://github.com/facebook/folly.git
     cd folly
-    git checkout -b v2024.08.26.00 tags/v2024.08.26.00
-    curl https://github.com/facebook/folly/compare/v2024.08.26.00...ktht:folly:v2024.08.26.00-arch-patch.diff | git apply
+    git checkout -b v2025.02.03.00 tags/v2025.02.03.00
+    curl https://github.com/facebook/folly/compare/v2025.02.03.00...ktht:folly:v2025.02.03.00-arch-patch.diff | git apply
     mkdir bin && cd $_
     export CXXFLAGS="-g3 -fPIC -Wno-nonnull -march=native"
     cmake -DCMAKE_INSTALL_PREFIX:PATH=$PWD/../install -DBUILD_SHARED_LIBS=ON ..
@@ -274,7 +305,20 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     make install
     ```
 
-6. It's finally time to build EOS. However, there are multiple issues with the code that need to be patched:
+    Obviously, this step requires you to install `google-glog`, as well as `fast_float` libraries beforehand.
+
+6. Install [`scitokens`](https://github.com/scitokens/scitokens-cpp):
+
+    ```
+    git clone https://github.com/scitokens/scitokens-cpp.git
+    git checkout -b v1.1.2 tags/v1.1.2
+    mkdir build && cd $_
+    JWT_CPP_DIR=$PWD/../vendor/jwt-cpp cmake -DCMAKE_INSTALL_PREFIX=$PWD/../install  ..
+    make -j12
+    make install
+    ```
+
+7. It's finally time to build EOS. However, there are multiple issues with the code that need to be patched:
 
 - `CMAKE_INSTALL_SYSCONFDIR` is hardcoded to `/etc` and it's not possible to overwrite it when trying to install the build to some local directory without root privileges. Here's the patch:
     ```diff
@@ -343,21 +387,37 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     unset(EOSFOLLY_LIBRARY)
     unset(EOSFOLLY_INCLUDE_DIR)
     ```
+- patch `fst/storage/Publish.cc` to not pass `info` parameter (more info [here](https://gitlab.com/procps-ng/procps/-/issues/332)):
+    ```diff
+    diff --git a/fst/storage/Publish.cc b/fst/storage/Publish.cc
+    index a93910cbe..9a4366d87 100644
+    --- a/fst/storage/Publish.cc
+    +++ b/fst/storage/Publish.cc
+    @@ -399,7 +399,7 @@ static uint32_t GetNumOfKworkerProcs()
+
+      while (struct pids_stack* stack = procps_pids_get(info,
+                                        PIDS_FETCH_TASKS_ONLY)) {
+    -    char* cmd = PIDS_VAL(0, str, stack, info);
+    +    char* cmd = PIDS_VAL(0, str, stack);
+
+        if (strstr(cmd, "kworker") == cmd) {
+          ++count;
+    ```
 - since [`26.0-rc2`](https://github.com/protocolbuffers/protobuf/releases/tag/v26.0-rc2) of `protobuf`, the `always_print_primitive_fields` field is deprecated in favor of `always_print_fields_with_no_presence`. The latest `protobuf` package that's available on Arch machines is already at version `27.3`. The easiest way to fix the issue is to run the following:
   ```bash
   sed -i 's/always_print_primitive_fields/always_print_fields_with_no_presence/g' $(grep -rl 'always_print_primitive_fields' .)
   ```
 
-    With that in mind, here are the instructions for building EOS:
+    Make sure to also install `benchmark`, `davix` and `grpc`.
+    With all that in mind, here are the instructions for building EOS:
 
     ```
     git clone https://github.com/cern-eos/eos.git
     cd eos
-    git checkout -b 5.2.24 tags/5.2.24
-    curl https://github.com/cern-eos/eos/compare/5.2.24...ktht:eos:5.2.24-sysconfdir-patch.diff | git apply
-    curl https://github.com/cern-eos/eos/compare/5.2.24...ktht:eos:5.2.24-pythonsite-patch.diff | git apply
-    curl https://github.com/cern-eos/eos/compare/5.2.24...ktht:eos:5.2.24-boost_context-patch.diff | git apply
-    curl https://github.com/cern-eos/eos/compare/5.2.24...ktht:eos:5.2.24-protobuf-patch.diff | git apply # or the sed command
+    git checkout -b 5.3.1 tags/5.3.1
+    git submodule update --init --recursive
+    curl https://github.com/cern-eos/eos/compare/5.3.1...ktht:eos:5.3.1-patch.diff | git apply
+    sed -i 's/always_print_primitive_fields/always_print_fields_with_no_presence/g' $(grep -rl 'always_print_primitive_fields' .)
     mkdir build-ninja && cd $_
     # /path/to = where you installed the libraries in previous steps
     cmake \
@@ -370,6 +430,8 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
       -DEOSFOLLY_INCLUDE_DIR=/path/to/folly/install/include \
       -DCMAKE_INSTALL_PREFIX:PATH=$PWD/../install \
       -DCMAKE_INSTALL_SYSCONFDIR=$PWD/../install/etc \
+      -DSCITOKENS_INCLUDE_DIR=/path/to/scitokens-cpp/install/include \
+      -DSCITOKENS_LIBRARY=/path/to/scitokens-cpp/install/lib/libSciTokens.so \
       -GNinja \
       -Wno-dev \
       -DCMAKE_CXX_FLAGS="-DGLOG_USE_GLOG_EXPORT -march=native" \
@@ -378,12 +440,12 @@ The SHA256 checksum is calculated from the tarball with `sha256sum`. Check that 
     ninja install
     ```
 
-7. To run any EOS commands, you need to set up some environment variables and authenticate yourself with Kerberos:
+8. To run any EOS commands, you need to set up some environment variables and authenticate yourself with Kerberos:
 
     ```
     export PATH=$PWD/../install/bin:$PWD/../install/sbin:$PATH
     export LD_LIBRARY_PATH=$PWD/../install/lib:$LD_LIBRARY_PATH
-    export PYTHONPATH=$PWD/../install/lib/python3.12/site-packages:$PYTHONPATH
+    export PYTHONPATH=$PWD/../install/lib/python$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" )/site-packages:$PYTHONPATH
     # <experiment> = atlas, cms, lhcb, theory, ... if you want to access /eos/<experiment>
     export EOS_MGM_URL=root://eos<experiment>.cern.ch
     kinit -f <CERN username>@CERN.CH
