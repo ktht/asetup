@@ -68,6 +68,7 @@ source setup_venv.sh -v -i jupyter torch # in the container
 ```
 
 Before launching Docker for the first time, you might want to add yourself to the control list of the socket file that bridges communication between users and the Docker daemon: `setfacl --modify user:karl:rw /var/run/docker.sock`.
+To make it permanent, add yourself to the `docker` group with: `usermod -aG docker $USER`.
 
 You can try the following Docker option when running `gdb` inside the container but face some problems: `--cap-add=SYS_PTRACE --security-opt seccomp=unconfined`.
 
